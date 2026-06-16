@@ -5,6 +5,8 @@ pydantic-settings
 python-dotenv
 google-genai
 jinja2
+pymysql
+cryptography
 
 # dev
 pytest

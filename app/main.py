@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.chatbot.api.chat_router import router
+from app.recommendation.api.recommendation_router import router as recommendation_router
 
 app = FastAPI(
     title="tsarbomba ChatBot API",
@@ -16,6 +17,7 @@ app.add_middleware(
 )
 
 app.include_router(router)
+app.include_router(recommendation_router)
 
 
 @app.get("/health")
