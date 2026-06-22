@@ -1,0 +1,24 @@
+# promtail — ④ EC2의 도커 컨테이너 로그를 ③ Loki로 push
+# Loki 타깃은 ③ 모니터링 EC2의 "사설 IP". stop/start로는 안 바뀌지만,
+# ③를 terminate 후 재생성하면 이 IP를 갱신해야 한다.
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://172.31.39.210:3100/loki/api/v1/push   # ③ Loki (사설 IP)
+
+scrape_configs:
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    relabel_configs:
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: container
+      - target_label: host
+        replacement: chatbot-ec2

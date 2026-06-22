@@ -1,0 +1,62 @@
+name: Deploy ChatBot (④ EC2)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+
+      - name: AWS 자격증명 (codebomb-ci)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-northeast-2
+
+      - name: ECR 로그인
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: 이미지 빌드 & ECR 푸시
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          REPO: codebomb-chatbot
+          TAG: ${{ github.sha }}
+        run: |
+          docker build -t $REGISTRY/$REPO:$TAG -t $REGISTRY/$REPO:latest .
+          docker push $REGISTRY/$REPO:$TAG
+          docker push $REGISTRY/$REPO:latest
+
+      - name: ④ EC2로 배포파일 복사
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.CHATBOT_EC2_HOST }}
+          username: ${{ secrets.EC2_SSH_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: "deploy/**"
+          target: "/opt/chatbot"
+          strip_components: 1          # 'deploy/' 제거하고 전송
+
+      - name: ④ EC2에서 pull & 기동
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+        with:
+          host: ${{ secrets.CHATBOT_EC2_HOST }}
+          username: ${{ secrets.EC2_SSH_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          envs: ECR_REGISTRY
+          script: |
+            aws ecr get-login-password --region ap-northeast-2 \
+              | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+            cd /opt/chatbot
+            export ECR_REGISTRY="$ECR_REGISTRY"
+            docker compose pull
+            docker compose up -d
+            docker image prune -f

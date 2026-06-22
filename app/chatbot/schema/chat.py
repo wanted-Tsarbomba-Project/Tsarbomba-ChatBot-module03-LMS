@@ -13,7 +13,7 @@ class ProblemInfo(BaseModel):
     content: str
     problem_type: str  # "CODE" or "TEXT"
     answer: Optional[str] = None
-    explanation: str
+    explanation: Optional[str] = None  # 해설 없는 문제 존재 가능 (Spring 이 null 로 보냄)
     submitted_answer: Optional[str] = None
 
 
