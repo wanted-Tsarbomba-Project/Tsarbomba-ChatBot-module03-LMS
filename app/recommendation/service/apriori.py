@@ -1,3 +1,4 @@
+from collections import defaultdict
 from dataclasses import dataclass
 from itertools import combinations
 from time import perf_counter
@@ -61,12 +62,13 @@ def generate_apriori_recommendations(
 
     started_at = perf_counter()
     recommendations_by_user = {}
+    rules_by_antecedent = _index_rules_by_antecedent(association_rules)
 
     for user_id, completed_problem_set_ids in completed_by_user.items():
         recommendations = _recommend_for_user(
             completed_problem_set_ids=completed_problem_set_ids & active_problem_set_ids,
             active_problem_set_ids=active_problem_set_ids,
-            association_rules=association_rules,
+            rules_by_antecedent=rules_by_antecedent,
             recommendation_count=recommendation_count,
         )
 
@@ -186,28 +188,46 @@ def _generate_association_rules(
     return rules
 
 
+def _index_rules_by_antecedent(
+    association_rules: list[AssociationRule],
+) -> dict[frozenset[int], list[AssociationRule]]:
+    rules_by_antecedent = defaultdict(list)
+
+    for rule in association_rules:
+        rules_by_antecedent[rule.antecedent_problem_set_ids].append(rule)
+
+    return dict(rules_by_antecedent)
+
+
 def _recommend_for_user(
     completed_problem_set_ids: set[int],
     active_problem_set_ids: set[int],
-    association_rules: list[AssociationRule],
+    rules_by_antecedent: dict[frozenset[int], list[AssociationRule]],
     recommendation_count: int,
 ) -> list[ProblemSetRecommendation]:
     best_rule_by_problem_set = {}
 
-    for rule in association_rules:
-        if not rule.antecedent_problem_set_ids.issubset(completed_problem_set_ids):
-            continue
+    sorted_completed_problem_set_ids = sorted(completed_problem_set_ids)
+    max_antecedent_size = min(
+        len(sorted_completed_problem_set_ids),
+        MAX_ITEMSET_SIZE - 1,
+    )
 
-        if rule.target_problem_set_id in completed_problem_set_ids:
-            continue
+    for antecedent_size in range(1, max_antecedent_size + 1):
+        for antecedent in combinations(sorted_completed_problem_set_ids, antecedent_size):
+            matched_rules = rules_by_antecedent.get(frozenset(antecedent), [])
 
-        if rule.target_problem_set_id not in active_problem_set_ids:
-            continue
+            for rule in matched_rules:
+                if rule.target_problem_set_id in completed_problem_set_ids:
+                    continue
 
-        current_best = best_rule_by_problem_set.get(rule.target_problem_set_id)
+                if rule.target_problem_set_id not in active_problem_set_ids:
+                    continue
 
-        if current_best is None or _is_better_rule(rule, current_best):
-            best_rule_by_problem_set[rule.target_problem_set_id] = rule
+                current_best = best_rule_by_problem_set.get(rule.target_problem_set_id)
+
+                if current_best is None or _is_better_rule(rule, current_best):
+                    best_rule_by_problem_set[rule.target_problem_set_id] = rule
 
     sorted_rules = sorted(
         best_rule_by_problem_set.values(),
