@@ -1,5 +1,12 @@
 from dataclasses import dataclass
 from itertools import combinations
+from time import perf_counter
+
+from app.monitoring.metrics import (
+    RECOMMENDATION_GENERATION_SCALE,
+    RECOMMENDATION_GENERATION_STAGE_DURATION,
+    RECOMMENDATION_GENERATION_STAGE_LAST_DURATION,
+)
 
 MIN_SUPPORT_COUNT = 2
 MAX_ITEMSET_SIZE = 4
@@ -28,6 +35,8 @@ def generate_apriori_recommendations(
     active_problem_set_ids: set[int],
     recommendation_count: int,
 ) -> dict[int, list[ProblemSetRecommendation]]:
+    scale_users = str(len(completed_by_user))
+    started_at = perf_counter()
     transactions = [
         completed_problem_set_ids & active_problem_set_ids
         for completed_problem_set_ids in completed_by_user.values()
@@ -37,11 +46,20 @@ def generate_apriori_recommendations(
         for transaction in transactions
         if transaction
     ]
+    _record_stage_duration("transaction_build", scale_users, perf_counter() - started_at)
+
+    started_at = perf_counter()
     support_counts = _calculate_frequent_itemset_support_counts(transactions)
+    _record_stage_duration("frequent_itemset", scale_users, perf_counter() - started_at)
+
+    started_at = perf_counter()
     association_rules = _generate_association_rules(
         support_counts=support_counts,
         total_transaction_count=len(transactions),
     )
+    _record_stage_duration("rule_generation", scale_users, perf_counter() - started_at)
+
+    started_at = perf_counter()
     recommendations_by_user = {}
 
     for user_id, completed_problem_set_ids in completed_by_user.items():
@@ -56,89 +74,67 @@ def generate_apriori_recommendations(
         if len(recommendations) == recommendation_count:
             recommendations_by_user[user_id] = recommendations
 
+    _record_stage_duration("user_pick", scale_users, perf_counter() - started_at)
+    _record_scale_values(
+        input_users=len(completed_by_user),
+        transactions=len(transactions),
+        active_problem_sets=len(active_problem_set_ids),
+        frequent_itemsets=len(support_counts),
+        association_rules=len(association_rules),
+        generated_users=len(recommendations_by_user),
+        generated_recommendations=sum(
+            len(recommendations)
+            for recommendations in recommendations_by_user.values()
+        ),
+    )
+
     return recommendations_by_user
+
+
+def _record_stage_duration(stage: str, scale_users: str, duration_seconds: float) -> None:
+    labels = {"stage": stage, "scale_users": scale_users}
+    RECOMMENDATION_GENERATION_STAGE_DURATION.labels(**labels).observe(duration_seconds)
+    RECOMMENDATION_GENERATION_STAGE_LAST_DURATION.labels(**labels).set(duration_seconds)
+
+
+def _record_scale_values(
+    input_users: int,
+    transactions: int,
+    active_problem_sets: int,
+    frequent_itemsets: int,
+    association_rules: int,
+    generated_users: int,
+    generated_recommendations: int,
+) -> None:
+    values = {
+        "input_users": input_users,
+        "transactions": transactions,
+        "active_problem_sets": active_problem_sets,
+        "frequent_itemsets": frequent_itemsets,
+        "association_rules": association_rules,
+        "generated_users": generated_users,
+        "generated_recommendations": generated_recommendations,
+    }
+
+    for metric_type, value in values.items():
+        RECOMMENDATION_GENERATION_SCALE.labels(type=metric_type).set(value)
 
 
 def _calculate_frequent_itemset_support_counts(
     transactions: list[set[int]],
 ) -> dict[frozenset[int], int]:
-    support_counts = {}
-
-    current_frequent_itemsets = _find_frequent_single_itemsets(transactions)
-    support_counts.update(current_frequent_itemsets)
-
-    itemset_size = 2
-    while current_frequent_itemsets and itemset_size <= MAX_ITEMSET_SIZE:
-        candidates = _generate_candidates(
-            previous_frequent_itemsets=set(current_frequent_itemsets),
-            itemset_size=itemset_size,
-        )
-
-        current_frequent_itemsets = _count_frequent_candidates(
-            transactions=transactions,
-            candidates=candidates,
-        )
-        support_counts.update(current_frequent_itemsets)
-        itemset_size += 1
-
-    return support_counts
-
-
-def _find_frequent_single_itemsets(
-    transactions: list[set[int]],
-) -> dict[frozenset[int], int]:
     item_counts = {}
 
     for transaction in transactions:
-        for problem_set_id in transaction:
-            itemset = frozenset({problem_set_id})
-            item_counts[itemset] = item_counts.get(itemset, 0) + 1
+        sorted_transaction = sorted(transaction)
+        max_size = min(len(sorted_transaction), MAX_ITEMSET_SIZE)
+
+        for itemset_size in range(1, max_size + 1):
+            for itemset in combinations(sorted_transaction, itemset_size):
+                frozen_itemset = frozenset(itemset)
+                item_counts[frozen_itemset] = item_counts.get(frozen_itemset, 0) + 1
 
     return _filter_by_min_support_count(item_counts)
-
-
-def _generate_candidates(
-    previous_frequent_itemsets: set[frozenset[int]],
-    itemset_size: int,
-) -> set[frozenset[int]]:
-    candidates = set()
-    previous_items = sorted(previous_frequent_itemsets, key=lambda item: sorted(item))
-
-    for left_index, left in enumerate(previous_items):
-        for right in previous_items[left_index + 1:]:
-            candidate = left | right
-
-            if len(candidate) != itemset_size:
-                continue
-
-            if _all_subsets_frequent(candidate, previous_frequent_itemsets):
-                candidates.add(candidate)
-
-    return candidates
-
-
-def _all_subsets_frequent(
-    candidate: frozenset[int],
-    previous_frequent_itemsets: set[frozenset[int]],
-) -> bool:
-    return all(
-        frozenset(subset) in previous_frequent_itemsets
-        for subset in combinations(candidate, len(candidate) - 1)
-    )
-
-
-def _count_frequent_candidates(
-    transactions: list[set[int]],
-    candidates: set[frozenset[int]],
-) -> dict[frozenset[int], int]:
-    candidate_counts = {}
-
-    for transaction in transactions:
-        for candidate in candidates:
-            if candidate.issubset(transaction):
-                candidate_counts[candidate] = candidate_counts.get(candidate, 0) + 1
-
-    return _filter_by_min_support_count(candidate_counts)
 
 
 def _filter_by_min_support_count(

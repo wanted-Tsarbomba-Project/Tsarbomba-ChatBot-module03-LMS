@@ -1,6 +1,9 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 router = APIRouter()
 
-# 여기에 monitoring 엔드포인트를 추가하세요. 예) @router.get("/monitoring/...")
-# 엔드포인트를 만든 뒤 app/main.py 에서 app.include_router(router) 로 연결하세요.
+
+@router.get("/metrics", include_in_schema=False)
+def metrics() -> Response:
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)

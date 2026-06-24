@@ -13,7 +13,7 @@ class ProblemSetRecommendationResponse(BaseModel):
     confidence: float
     lift: float
     rank_no: int = Field(alias="rankNo")
-    algorithm: str = "APRIORI"
+    algorithm: str = "ASSOCIATION_RULE_BRUTE_FORCE"
 
     model_config = ConfigDict(validate_by_name=True, validate_by_alias=True)
 

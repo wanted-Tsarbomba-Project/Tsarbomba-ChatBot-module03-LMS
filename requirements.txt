@@ -7,6 +7,7 @@ google-genai
 jinja2
 pymysql
 cryptography
+prometheus-client
 
 # dev
 pytest
