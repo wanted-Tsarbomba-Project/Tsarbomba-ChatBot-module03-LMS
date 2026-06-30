@@ -1,6 +1,6 @@
 import logging
 from functools import lru_cache
-from typing import Iterator
+from typing import Iterator, Optional
 
 from google import genai
 from google.genai import types
@@ -70,10 +70,13 @@ def _usage_payload(usage_metadata) -> dict:
     }
 
 
-def stream_gemini(request: ChatRequest, system_prompt: str) -> Iterator[str]:
+def stream_gemini(
+    request: ChatRequest, system_prompt: str, trace_id: Optional[str] = None
+) -> Iterator[str]:
     """Gemini 스트림을 SSE 프레임 문자열로 흘린다.
 
     토큰마다 token_frame, 끝에 done_frame(사용량). 도중 예외는 error_frame으로 보내고 종료.
+    trace_id는 BE(Spring)가 보낸 X-Trace-Id — 실패 로그에 박아 두 서비스 로그를 엮는다.
     """
     settings = get_settings()
     client = _get_client()
@@ -93,5 +96,7 @@ def stream_gemini(request: ChatRequest, system_prompt: str) -> Iterator[str]:
                 usage = chunk.usage_metadata
         yield sse.done_frame(_usage_payload(usage))
     except Exception:
-        logger.exception("Gemini 스트리밍 중 예외")
+        logger.exception(
+            "event=chatbot_gemini_failed code=%s trace_id=%s", AI_RESPONSE_FAILED, trace_id
+        )
         yield sse.error_frame(AI_RESPONSE_FAILED, AI_RESPONSE_FAILED_MESSAGE)
