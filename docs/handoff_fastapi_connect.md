@@ -257,6 +257,15 @@ Python 서버를 `localhost:8000`으로 띄운 상태에서 Spring `bootRun` 후
 
 ---
 
+## 관측 — traceId 상관(correlation) [BE ↔ FastAPI]
+
+Spring이 `/chat` 호출 시 **`X-Trace-Id` 헤더**로 상관 ID를 전파한다(`FastApiChatClient`). FastAPI는 이를 받아 로그에 박아 두 서비스 로그를 같은 traceId로 엮는다.
+
+- `chat_router.chat()` — `x_trace_id: Optional[str] = Header(alias="X-Trace-Id")` 수신 → `stream_gemini`로 전달. 유저 입력 원문은 로깅 안 함(`user_message_length`만).
+- `gemini_client.stream_gemini(request, system_prompt, trace_id)` — 실패 시 `event=chatbot_gemini_failed code=.. trace_id=..`.
+- 로그 수집: `deploy/promtail-config.yml`이 컨테이너 로그를 **BE와 동일한 ③ Loki**로 push → Grafana에서 `{job=~".+"} |= "<traceId>"` 로 BE+FastAPI 로그가 한 화면에 뜬다(값으로 매칭 → BE `traceId=`·FastAPI `trace_id=` 둘 다 잡힘).
+- ⚠️ traceId가 없으면(헤더 미수신) `trace_id=None`으로 찍힌다 — BE 단독 추적은 가능.
+
 ## 다음 세션이 할 것
 
 1. `src/main/resources/application.yml` — `spring.profiles.active: local, mock` → `local` 변경
